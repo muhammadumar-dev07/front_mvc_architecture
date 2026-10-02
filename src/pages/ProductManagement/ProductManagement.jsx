@@ -1,29 +1,12 @@
 import { useCallback, useDeferredValue, useEffect, useState } from "react";
-import axios from "axios";
 import { toast } from "react-toastify";
 import { Search } from "lucide-react";
-import API_URL from "./config/api.js";
-import ProductCard from "./ProductCard.jsx";
-import ProductFormModal from "./ProductFormModal.jsx";
-import ConfirmDeleteModal from "./ConfirmDeleteModal.jsx";
-import Toast from "./Toast.jsx";
-
-function requestProducts(onSuccess, onError, onComplete) {
-  return axios
-    .get(`${API_URL}/products`)
-    .then((response) => {
-      const items = Array.isArray(response.data) ? response.data : response.data?.value;
-      if (!Array.isArray(items)) throw new Error("The products response was not a list.");
-
-      onSuccess(items.map((product) => ({
-        ...product,
-        id: product._id ?? product.id,
-        desc: product.desc ?? "",
-      })));
-    })
-    .catch(onError)
-    .finally(onComplete);
-}
+import { createProduct, deleteProduct as deleteProductRequest, getProducts, updateProduct } from "../../services/api.js";
+import ProductCard from "../../components/ProductCard.jsx";
+import ProductFormModal from "../../components/ProductFormModal.jsx";
+import ConfirmDeleteModal from "../../components/ConfirmDeleteModal.jsx";
+import Toast from "../../components/Toast.jsx";
+import "./ProductManagement.css";
 
 function ProductManagement() {
   const [products, setProducts] = useState([]);
@@ -38,25 +21,33 @@ function ProductManagement() {
   const [isDeleting, setIsDeleting] = useState(false);
   const deferredSearch = useDeferredValue(debouncedSearch);
 
-  const loadProducts = useCallback(() => {
-    return requestProducts(
-      (loadedProducts) => {
-        setProducts(loadedProducts);
-        setLoadFailed(false);
-      },
-      (error) => {
-        console.error("Failed to load products:", error);
-        setLoadFailed(true);
-        toast.error("Couldn't load products. Check your connection and try again.", {
+  const loadProducts = useCallback(async () => {
+    try {
+      const response = await getProducts();
+      const items = Array.isArray(response) ? response : response?.value;
+      if (!Array.isArray(items)) throw new Error("The products response was not a list.");
+
+      setProducts(items.map((product) => ({
+        ...product,
+        id: product._id,
+        desc: product.desc ?? "",
+      })));
+      setLoadFailed(false);
+    } catch (error) {
+      console.error("Failed to load products:", error);
+      setLoadFailed(true);
+      if (!error.authExpired) {
+        toast.error(error.message || error.error || "Couldn't load products. Check your connection and try again.", {
           toastId: "products-load-error",
         });
-      },
-      () => setIsLoading(false),
-    );
+      }
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
   useEffect(() => {
-    void loadProducts();
+    void Promise.resolve().then(loadProducts);
   }, [loadProducts]);
 
   useEffect(() => {
@@ -87,17 +78,19 @@ function ProductManagement() {
     setIsSaving(true);
     try {
       if (activeProduct) {
-        await axios.put(`${API_URL}/products/${activeProduct.id}`, values);
+        await updateProduct(activeProduct._id, values);
         toast.success("Product updated.");
       } else {
-        await axios.post(`${API_URL}/products`, values);
+        await createProduct(values);
         toast.success("Product added.");
       }
       setIsFormOpen(false);
       await loadProducts();
     } catch (error) {
       console.error("Failed to save product:", error);
-      toast.error("Couldn't save this product. Check your connection and try again.");
+      if (!error.authExpired) {
+        toast.error(error.message || error.error || "Couldn't save this product. Check your connection and try again.");
+      }
     } finally {
       setIsSaving(false);
     }
@@ -107,13 +100,15 @@ function ProductManagement() {
     if (!productToDelete) return;
     setIsDeleting(true);
     try {
-      await axios.delete(`${API_URL}/products/${productToDelete.id}`);
+      await deleteProductRequest(productToDelete._id);
       toast.success("Product deleted.");
       setProductToDelete(null);
       await loadProducts();
     } catch (error) {
       console.error("Failed to delete product:", error);
-      toast.error("Couldn't delete this product. Check your connection and try again.");
+      if (!error.authExpired) {
+        toast.error(error.message || error.error || "Couldn't delete this product. Check your connection and try again.");
+      }
     } finally {
       setIsDeleting(false);
     }
